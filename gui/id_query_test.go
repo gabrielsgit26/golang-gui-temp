@@ -106,7 +106,7 @@ func TestUnknownFocusReportsTheScopedSpelling(t *testing.T) {
 	buf := captureDebugMask(t, DebugAll)
 	w := &Window{}
 	w.layout = scopedIDTree()
-	w.viewState.focusID = "nav"
+	w.viewState.focusID.Store("nav")
 
 	w.debugAudit(&w.layout)
 
@@ -122,12 +122,56 @@ func TestUnknownFocusCorrectSpellingIsQuiet(t *testing.T) {
 	buf := captureDebugMask(t, DebugAll)
 	w := &Window{}
 	w.layout = scopedIDTree()
-	w.viewState.focusID = "detail:nav"
+	w.viewState.focusID.Store("detail:nav")
 
 	w.debugAudit(&w.layout)
 
 	if got := buf.String(); got != "" {
 		t.Fatalf("want no findings, got %q", got)
+	}
+}
+
+// An exact match sorts before a trailing-segment match, so a caller
+// that takes the first answer gets the unambiguous one even when the
+// scoped widget comes first in tree order.
+func TestResolveIDExactMatchSortsFirst(t *testing.T) {
+	exact := &Shape{ID: "nav"}
+	exact.effID = "nav"
+	scoped := &Shape{ID: "nav"}
+	scoped.effID = "detail:nav"
+	w := &Window{}
+	w.layout = debugTree(scoped, exact)
+
+	got := w.ResolveID("nav")
+	want := []string{"nav", "detail:nav"}
+	if len(got) != len(want) {
+		t.Fatalf(`ResolveID("nav") = %v, want %v`, got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf(`ResolveID("nav") = %v, want %v`, got, want)
+		}
+	}
+}
+
+// Past the depth budget the diagnostic list truncates instead of
+// recursing without bound — the same budget event dispatch drops input
+// at, so no frame the pipeline tolerates can outgrow it.
+func TestEffectiveIDsTruncatesPastDepthBudget(t *testing.T) {
+	const depth = maxEventDepth + 50
+	root := Layout{Shape: &Shape{}}
+	cur := &root
+	for range depth {
+		cur.Children = append(cur.Children, Layout{Shape: &Shape{ID: "n"}})
+		cur = &cur.Children[0]
+	}
+	w := &Window{}
+	w.layout = root
+
+	got := w.EffectiveIDs()
+	if len(got) != maxEventDepth {
+		t.Fatalf("EffectiveIDs() over a %d-deep tree = %d IDs, want %d",
+			depth, len(got), maxEventDepth)
 	}
 }
 
@@ -137,7 +181,7 @@ func TestUnknownFocusNamesANonFocusableShape(t *testing.T) {
 	buf := captureDebugMask(t, DebugAll)
 	w := &Window{}
 	w.layout = scopedIDTree()
-	w.viewState.focusID = "detail"
+	w.viewState.focusID.Store("detail")
 
 	w.debugAudit(&w.layout)
 

@@ -29,7 +29,7 @@ func runScrollProbe(focused bool) (gotX, gotY float32) {
 	}
 	root.Children[0].Parent = root
 	if focused {
-		w.viewState.focusID = "sc"
+		w.viewState.focusID.Store("sc")
 	}
 	mouseScrollHandler(root,
 		&Event{Type: EventMouseScroll, MouseX: 150, MouseY: 80, ScrollY: 3}, w)
@@ -153,13 +153,13 @@ func TestScrollWorksWhileMouseButtonHeld(t *testing.T) {
 	}
 }
 
-// keyDownScrollHandler matches modifiers the same way and needs the same
+// keydownScrollHandler matches modifiers the same way and needs the same
 // mask: arrow-key scrolling must survive a held mouse button.
 func TestKeyScrollWorksWhileMouseButtonHeld(t *testing.T) {
 	w := &Window{focused: true}
 	_, sc := scrollableProbeTree()
 	e := &Event{Type: EventKeyDown, KeyCode: KeyDown, Modifiers: ModLMB}
-	keyDownScrollHandler(sc, e, w)
+	keydownScrollHandler(sc, e, w)
 	if !e.IsHandled {
 		t.Error("arrow scroll dropped while a mouse button was held")
 	}

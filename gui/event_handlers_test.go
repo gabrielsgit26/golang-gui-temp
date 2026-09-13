@@ -205,7 +205,7 @@ func TestKeyDownScrollHandlerArrows(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			e := &Event{KeyCode: tc.key, Modifiers: tc.mod}
-			keyDownScrollHandler(layout, e, w)
+			keydownScrollHandler(layout, e, w)
 			if !e.IsHandled {
 				t.Errorf("%s not handled", tc.name)
 			}
@@ -341,6 +341,59 @@ func TestMouseLockHandlers(t *testing.T) {
 			t.Error("mouse lock should intercept up")
 		}
 	})
+	t.Run("down", func(t *testing.T) {
+		t.Parallel()
+		lockCalled := false
+		w := &Window{windowWidth: 800, windowHeight: 600}
+		w.MouseLock(MouseLockCfg{
+			MouseDown: func(ctx EventCtx) {
+				lockCalled = true
+			},
+		})
+		root := &Layout{Shape: &Shape{}}
+		e := &Event{MouseX: 50, MouseY: 50}
+		mouseDownHandler(root, false, e, w)
+		if !lockCalled {
+			t.Error("mouse lock should intercept down")
+		}
+	})
+	t.Run("down_internal_only", func(t *testing.T) {
+		t.Parallel()
+		lockCalled := false
+		w := &Window{windowWidth: 800, windowHeight: 600}
+		w.MouseLock(MouseLockCfg{
+			mouseDown: func(ctx EventCtx) {
+				lockCalled = true
+			},
+		})
+		root := &Layout{Shape: &Shape{}}
+		e := &Event{MouseX: 50, MouseY: 50}
+		mouseDownHandler(root, false, e, w)
+		if !lockCalled {
+			t.Error("internal mouse lock should intercept down")
+		}
+	})
+	t.Run("down_prefers_exported", func(t *testing.T) {
+		t.Parallel()
+		exportedCalls := 0
+		internalCalls := 0
+		w := &Window{windowWidth: 800, windowHeight: 600}
+		w.MouseLock(MouseLockCfg{
+			MouseDown: func(ctx EventCtx) {
+				exportedCalls++
+			},
+			mouseDown: func(ctx EventCtx) {
+				internalCalls++
+			},
+		})
+		root := &Layout{Shape: &Shape{}}
+		e := &Event{MouseX: 50, MouseY: 50}
+		mouseDownHandler(root, false, e, w)
+		if exportedCalls != 1 || internalCalls != 0 {
+			t.Errorf("exported=%d internal=%d, want 1 and 0",
+				exportedCalls, internalCalls)
+		}
+	})
 }
 
 func TestMouseMoveHandlerSkipsOutOfWindow(t *testing.T) {
@@ -444,6 +497,36 @@ func TestMouseScrollHandlerFocusedOnMouseScroll(t *testing.T) {
 	mouseScrollHandler(root, e, w)
 	if !called {
 		t.Error("focused OnMouseScroll should be called")
+	}
+}
+
+func TestMouseScrollHandlerSkipsDisabledFocus(t *testing.T) {
+	t.Parallel()
+	// findLayoutByFocusID matches canTakeFocus, the same predicate
+	// dispatch uses: parking focus on a disabled widget (a SetFocus
+	// the next frame's fixup has not repaired yet) must not deliver
+	// the focused scroll to it.
+	called := false
+	root := &Layout{
+		Shape: &Shape{},
+		Children: []Layout{
+			{Shape: &Shape{
+				Focusable: true, Disabled: true, ID: "f5d",
+				events: &eventHandlers{
+					OnMouseScroll: func(ctx EventCtx) {
+						called = true
+						ctx.Consume()
+					},
+				},
+			}},
+		},
+	}
+	w := &Window{windowWidth: 800, windowHeight: 600}
+	w.SetFocus("f5d")
+	e := &Event{MouseX: 50, MouseY: 50, ScrollY: -10}
+	mouseScrollHandler(root, e, w)
+	if called {
+		t.Error("disabled focused OnMouseScroll should not be called")
 	}
 }
 
@@ -576,6 +659,76 @@ func TestMouseScrollFallbackUnhandledReachesContainer(t *testing.T) {
 	mouseScrollFallbackHandler(root, e, w)
 	if !e.IsHandled {
 		t.Error("scroll container should handle unhandled event")
+	}
+}
+
+func TestMouseScrollFocusedDeclinesCallsOnce(t *testing.T) {
+	t.Parallel()
+	// The focused target runs through callRelative first. When it
+	// declines, the fallback must not run the same callback a
+	// second time under the cursor. It still falls through to a
+	// scroll container below.
+	calls := 0
+	root := &Layout{
+		Shape: &Shape{},
+		Children: []Layout{
+			{Shape: &Shape{
+				Focusable: true, ID: "f8",
+				shapeClip: drawClip{X: 0, Y: 0,
+					Width: 100, Height: 100},
+				events: &eventHandlers{
+					OnMouseScroll: func(ctx EventCtx) {
+						calls++
+						// Decline on purpose: no Consume call.
+					},
+				},
+			}},
+		},
+	}
+	w := &Window{windowWidth: 800, windowHeight: 600}
+	w.SetFocus("f8")
+	e := &Event{MouseX: 50, MouseY: 50, ScrollY: -10}
+	mouseScrollHandler(root, e, w)
+	if calls != 1 {
+		t.Errorf("focused OnMouseScroll ran %d times, want 1", calls)
+	}
+}
+
+func TestMouseScrollSkipIsPointerNotID(t *testing.T) {
+	t.Parallel()
+	// The fallback skips the focused node by pointer. A second
+	// shape reusing the same leaf ID (a duplicate the debug
+	// walk reports elsewhere) must still run its own callback.
+	focusedCalls := 0
+	siblingCalls := 0
+	mkScroll := func(calls *int) Layout {
+		return Layout{Shape: &Shape{
+			Focusable: true, ID: "dup",
+			shapeClip: drawClip{X: 0, Y: 0,
+				Width: 100, Height: 100},
+			events: &eventHandlers{
+				OnMouseScroll: func(ctx EventCtx) {
+					*calls++
+					// Decline on purpose: no Consume call.
+				},
+			},
+		}}
+	}
+	focused := mkScroll(&focusedCalls)
+	sibling := mkScroll(&siblingCalls)
+	root := &Layout{
+		Shape:    &Shape{},
+		Children: []Layout{focused, sibling},
+	}
+	w := &Window{windowWidth: 800, windowHeight: 600}
+	w.SetFocus("dup")
+	e := &Event{MouseX: 50, MouseY: 50, ScrollY: -10}
+	mouseScrollHandler(root, e, w)
+	if focusedCalls != 1 {
+		t.Errorf("focused ran %d times, want 1", focusedCalls)
+	}
+	if siblingCalls != 1 {
+		t.Errorf("sibling ran %d times, want 1", siblingCalls)
 	}
 }
 
@@ -964,7 +1117,7 @@ func TestCharHandlerWideTreeStillTypes(t *testing.T) {
 		},
 	})
 	w := &Window{}
-	w.viewState.focusID = "leaf"
+	w.viewState.focusID.Store("leaf")
 	e := &Event{CharCode: 'a'}
 	charHandler(root, e, w)
 	if got != "a" {
@@ -985,7 +1138,7 @@ func TestKeydownHandlerWideTreeStillKeys(t *testing.T) {
 		},
 	})
 	w := &Window{}
-	w.viewState.focusID = "leaf"
+	w.viewState.focusID.Store("leaf")
 	e := &Event{KeyCode: KeyEnter}
 	keydownHandler(root, e, w)
 	if gotKey != KeyEnter {
@@ -1006,7 +1159,7 @@ func TestKeyupHandlerWideTreeStillKeys(t *testing.T) {
 		},
 	})
 	w := &Window{}
-	w.viewState.focusID = "leaf"
+	w.viewState.focusID.Store("leaf")
 	keyupHandler(root, &Event{KeyCode: KeyEnter}, w)
 	if !fired {
 		t.Error("OnKeyUp did not fire in a wide container")

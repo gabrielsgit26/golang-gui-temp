@@ -136,7 +136,7 @@ func (w *Window) syncA11y() {
 	focusedIdx := a11yCollect(
 		&w.layout, -1,
 		&w.a11y.nodes,
-		w.viewState.focusID,
+		w.FocusID(),
 		&w.a11y.liveNodes,
 	)
 
@@ -393,7 +393,7 @@ func (w *Window) WindowCleanup() {
 			w.cancelCtx()
 		}
 		w.stopAnimationLoop()
-		w.releaseAllFileAccess()
+		w.ReleaseAllFileAccess()
 		if w.nativePlatform != nil {
 			w.nativePlatform.A11yDestroy()
 		}

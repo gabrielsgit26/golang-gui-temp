@@ -100,7 +100,7 @@ func TestRadioClickHoverChangesBorder(t *testing.T) {
 
 func TestRadioFocusBorder(t *testing.T) {
 	w := newTestWindow()
-	w.viewState.focusID = "f5"
+	w.viewState.focusID.Store("f5")
 	v := Radio(RadioCfg{OnClick: noop, ID: "f5"})
 	layout := generateViewLayout(v, w)
 	layout.Shape.events.AmendLayout(EventCtx{&layout, nil, w})
@@ -123,14 +123,14 @@ func TestRadioUsesRadioStyleDefaults(t *testing.T) {
 	}
 }
 
-func TestRadioCustomTextStyleMerged(t *testing.T) {
+func TestRadioCustomTextStyleLabelMerged(t *testing.T) {
 	w := newTestWindow()
 	custom := TextStyle{Color: RGBA(255, 0, 0, 255)}
 	v := Radio(RadioCfg{
-		ID:        "widget_test_test_radio_custom_text_style_merged",
-		OnClick:   noop,
-		Label:     "Z",
-		TextStyle: custom,
+		ID:             "widget_test_test_radio_custom_text_style_merged",
+		OnClick:        noop,
+		Label:          "Z",
+		TextStyleLabel: custom,
 	})
 	layout := generateViewLayout(v, w)
 	// Label is second child (row with text).
@@ -237,7 +237,7 @@ func TestToggleClickHoverChangesColor(t *testing.T) {
 
 func TestToggleFocusBorder(t *testing.T) {
 	w := newTestWindow()
-	w.viewState.focusID = "f5"
+	w.viewState.focusID.Store("f5")
 	v := Toggle(ToggleCfg{OnClick: noop, ID: "f5"})
 	layout := generateViewLayout(v, w)
 	layout.Shape.events.AmendLayout(EventCtx{&layout, nil, w})

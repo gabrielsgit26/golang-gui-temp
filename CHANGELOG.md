@@ -10,6 +10,14 @@ and this project adheres to
 
 ### Added
 
+- **`Window.SetFileAccessAppID`, `Window.RestoreFileAccess`,
+  `Window.ReleaseFileAccess`, and `Window.ReleaseAllFileAccess` are public
+  (#372)** — A caller that holds an `AccessiblePath` grant can now release it
+  early instead of waiting for `WindowCleanup`. Set the app ID once, then call
+  restore in `OnInit`; restore clears active grants first, so a second call
+  cannot record the same bookmark twice. Release stops access only; the
+  persisted copy stays. All four must run on the main thread — from any other
+  goroutine, use `Window.QueueCommand`.
 - **`Window.IsHovered` and `Window.IsPressed` read hover and press state while a
   view is built (#587)** — A view can now pick a look from whether it is hovered
   or pressed, not only recolor itself afterwards in `OnHover`. Pass the
@@ -43,8 +51,80 @@ and this project adheres to
   was exported for third-party `Animation` implementations, but only the
   unexported spellings existed, so outside packages could not enqueue callbacks.
   The exported methods are nil-safe; the old spellings remain as delegates.
+- **`GesturePhase` and `TouchToolType` are public** — `Event.GesturePhase` and
+  `TouchPoint.ToolType` used unexported types with partly exported constants, so
+  app code could read `GesturePhaseChanged` and `TouchToolFinger` but could not
+  name the type or compare the other phases. All constants are now exported
+  (`GesturePhaseBegan`, `GesturePhaseEnded`, `GesturePhaseCancelled`,
+  `TouchToolUnknown`, `TouchToolStylus`, `TouchToolMouse`, `TouchToolEraser`,
+  `TouchToolPalm`); the lowercase spellings remain as aliases.
+- **`MouseLockCfg.MouseDown` is public** — the lock exposed `MouseMove` and
+  `MouseUp` but kept the mouse-down intercept internal, so external drag code
+  could not intercept the press that starts a drag. When both spellings are set,
+  `MouseDown` runs and the internal one is ignored.
+- **`SwitchCfg.TextStyleLabel` and `RadioCfg.TextStyleLabel` style the trailing
+  label (#335)** — `Switch` and `Radio` used the control text style for the
+  label beside the control. `Toggle` had a dedicated label style. All three now
+  take `TextStyleLabel`, and zero takes the theme default. A caller that styled
+  the label through `TextStyle` moves that style to `TextStyleLabel`.
+- **`RegisterAppFontBytes` is public** — the docs already told app code to
+  register embedded fonts through it, but only the unexported spelling existed,
+  so outside packages could not populate the in-memory font list at all. The
+  exported function dedupes by content and retains bytes by reference, matching
+  the documented contract. `RegisterAppFont` ignores empty paths, and font
+  registration is now mutex-guarded with copy-on-read at load time.
+- **Correctly-spelled icon aliases are public** — `IconEllipsisH`,
+  `IconEllipsisV`, `IconFrowning`, `IconOctopus`, `IconMessenger`, and `IconMap`
+  alias the historically misspelled constants, and `IconLookup` answers both
+  spellings. The old names and keys stay.
 
 ### Fixed
+
+- **Web touch end and cancel carry the lifted fingers** — The browser drops
+  lifted fingers from `e.touches`, so building touch-end events from it sent an
+  empty event that removed nothing. The recognizer stayed wedged with the finger
+  still tracked: the second tap of a double-tap arrived as a second finger of a
+  phantom multi-touch, and pinch and rotate never got their Ended. End and
+  cancel events now carry `e.changedTouches`, matching the iOS and Android
+  backends.
+- **Touch gestures end cleanly and land where the fingers lift** — A pinch that
+  starts with both fingers on one point no longer reports an infinite scale. A
+  fast pan that rests before the lift no longer flings a swipe. A simultaneous
+  pinch and twist now ends both gestures instead of dropping the rotate. The
+  mouse release that touch synthesizes now fires at the release point instead of
+  the press point. A pan over a container with no scroll room now reaches the
+  widgets below it instead of stopping. A finger that stays down after its
+  partner lifts now starts a new press at its own position, so the tap that
+  follows lands correctly and clicks. Malformed touch input no longer panics,
+  and gesture dispatch now obeys the same depth cap as the mouse handlers.
+- **A duplicate widget ID no longer fires keyboard handlers twice** — Two
+  widgets sharing an effective ID (a bug the debug gate reports) collapsed to
+  one tab stop, but both ran the focused widget's `OnKeyDown`, `OnChar` and
+  `OnKeyUp`, and both activated on Space/Enter — one press could apply a
+  mutation twice. The first twin in dispatch order now wins the keypress,
+  matching the tab order's first-candidate rule. Scroll dispatch is unchanged:
+  the focused pass still runs first and the fallback still skips it by pointer.
+- **A parked focus no longer scrolls a disabled widget** — Focusing a widget
+  that is disabled (a `SetFocus` the next frame's fixup has not repaired yet)
+  still matched the focused scroll target, so a wheel tick reached a disabled
+  widget's `OnMouseScroll`. The focused-ID walk now uses the same take-focus
+  predicate dispatch uses, so the scroll falls through to the container below.
+- **A rich-text style change no longer shows a stale layout** — The cross-frame
+  layout cache keyed on run text and the base style only, so changing a run's
+  size or family, or the hanging indent, reused the old layout. The key now
+  chains run styles, the full base style, and the hanging indent, and mixes its
+  inputs in sequence instead of XOR. Table column-width caching gets the same
+  treatment: its key covers padding, minimum width, text styles, and
+  separator-delimited cell values instead of bare concatenated text.
+- **A focused scroll handler no longer runs twice per wheel tick** — When the
+  focused widget sat under the cursor and declined the scroll, the focused pass
+  ran its `OnMouseScroll` and the fallback ran the same callback again before
+  reaching the container below. The fallback now skips the focused node it
+  already ran; the cascade to the container below is unchanged.
+- **A non-finite scroll delta no longer poisons the scroll offset** — A NaN
+  delta passed through `f32Clamp` and stuck in the scroll map, freezing the
+  container. `scrollVertical` and `scrollHorizontal` now drop a non-finite delta
+  and a non-finite result, matching the smooth-scroll path.
 
 - **A menu shortcut no longer also runs the matching command (macOS)** — When a
   native menubar item had a `Shortcut` and a command had the same chord, one key
@@ -184,6 +264,26 @@ and this project adheres to
   `Grayscale`, `Sepia`, and `Invert` returned the shared package singleton, and
   `colorFilterCompose` aliased its input on a nil side, so one in-package write
   would leak across users. Each call now returns a fresh copy.
+- **Dock tree operations accept a nil root and `DockTreeAddTab` ignores
+  repeats** — every tree walk dereferenced the root first, so a nil tree
+  panicked instead of answering empty. Nil now returns nil (or false for
+  lookups), and adding a panel that is already a tab returns the tree unchanged
+  instead of stamping two tab buttons with one ID.
+- **`DockNodeSanitize` repairs more malformed input** — beyond ratio clamping it
+  now coerces unknown node kinds to panel groups, collapses over-deep branches
+  to empty groups instead of leaving splits with nil children, drops duplicate
+  panel IDs, points a dangling `SelectedID` at the first panel, and mints
+  separator-free node IDs so a `:` in app data cannot push a group outside the
+  dock scope.
+- **ID lookups and the ID audit close five gaps** — `Window.ResolveID` sorts an
+  exact match before trailing-segment matches, so taking the first answer gives
+  the unambiguous widget instead of tree order. `Window.EffectiveIDs` (and the
+  near-miss lookup built on it) stops at the shared 256-deep budget instead of
+  recursing without bound. `ScopeIDN` with an empty owner no longer over-sizes
+  its buffer by one byte. The `ids` audit mode flags a composition with the ID
+  on the right (`"panel:" + cfg.ID`), fails closed on a file that does not parse
+  instead of passing green over unscanned code, and no longer panics on a
+  zero-argument `ScopeID` call.
 
 ## [v0.75.0] - 2026-09-12
 

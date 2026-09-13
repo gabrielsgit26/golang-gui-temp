@@ -67,10 +67,11 @@ func charHandler(layout *Layout, e *Event, w *Window) {
 	if layout == nil {
 		return
 	}
-	charHandlerDepth(layout, e, w, 0)
+	var served uint8
+	charHandlerDepth(layout, e, w, 0, &served)
 }
 
-func charHandlerDepth(layout *Layout, e *Event, w *Window, depth int) {
+func charHandlerDepth(layout *Layout, e *Event, w *Window, depth int, served *uint8) {
 	if overMaxDepth(depth) {
 		return
 	}
@@ -78,7 +79,7 @@ func charHandlerDepth(layout *Layout, e *Event, w *Window, depth int) {
 		if !isChildEnabled(&layout.Children[i]) {
 			continue
 		}
-		charHandlerDepth(&layout.Children[i], e, w, depth+1)
+		charHandlerDepth(&layout.Children[i], e, w, depth+1, served)
 		if e.IsHandled {
 			return
 		}
@@ -93,7 +94,7 @@ func charHandlerDepth(layout *Layout, e *Event, w *Window, depth int) {
 		events = layout.Shape.events
 	}
 	// Delivers to the focused target, which consumes explicitly.
-	if executeFocusCallback(layout, e, w, onChar, evChar) {
+	if executeFocusCallback(layout, e, w, onChar, evChar, served) {
 		return
 	}
 	// Spacebar-to-click: when ClickOnSpace is set, fire OnClick
@@ -105,7 +106,8 @@ func charHandlerDepth(layout *Layout, e *Event, w *Window, depth int) {
 		events.clickOnSpace &&
 		e.CharCode == charSpace &&
 		events.OnClick != nil {
-		if isFocusedTarget(layout, w) {
+		// One activation per identity per dispatch: see markServed.
+		if isFocusedTarget(layout, w) && !markServed(served, focusSlotCharClick) {
 			e.IsHandled = true
 			playShapeSound(layout, w)
 			events.OnClick(EventCtx{layout, e, w})
@@ -127,10 +129,11 @@ func keydownHandler(layout *Layout, e *Event, w *Window) {
 	if layout == nil {
 		return
 	}
-	keydownHandlerDepth(layout, e, w, 0)
+	var served uint8
+	keydownHandlerDepth(layout, e, w, 0, &served)
 }
 
-func keydownHandlerDepth(layout *Layout, e *Event, w *Window, depth int) {
+func keydownHandlerDepth(layout *Layout, e *Event, w *Window, depth int, served *uint8) {
 	if overMaxDepth(depth) {
 		return
 	}
@@ -139,7 +142,7 @@ func keydownHandlerDepth(layout *Layout, e *Event, w *Window, depth int) {
 		if !isChildEnabled(&layout.Children[i]) {
 			continue
 		}
-		keydownHandlerDepth(&layout.Children[i], e, w, depth+1)
+		keydownHandlerDepth(&layout.Children[i], e, w, depth+1, served)
 		if e.IsHandled {
 			return
 		}
@@ -156,7 +159,7 @@ func keydownHandlerDepth(layout *Layout, e *Event, w *Window, depth int) {
 	// Nothing is pre-marked: OnKeyDown receives every key, so an
 	// implicit claim here would silently kill tab traversal and
 	// accelerators in any widget that has a key handler.
-	executeFocusCallback(layout, e, w, onKeyDown, evNotify)
+	executeFocusCallback(layout, e, w, onKeyDown, evNotify, served)
 	if e.IsHandled {
 		return
 	}
@@ -168,13 +171,18 @@ func keydownHandlerDepth(layout *Layout, e *Event, w *Window, depth int) {
 		events.clickOnEnter &&
 		e.KeyCode == KeyEnter &&
 		events.OnClick != nil {
+		// One activation per identity per dispatch: see markServed.
+		// The isFocusedTarget gate above already passed.
+		if markServed(served, focusSlotKeyClick) {
+			return
+		}
 		e.IsHandled = true
 		playShapeSound(layout, w)
 		events.OnClick(EventCtx{layout, e, w})
 		return
 	}
 	if layout.Shape.Scrollable {
-		keyDownScrollHandler(layout, e, w)
+		keydownScrollHandler(layout, e, w)
 	}
 }
 
@@ -184,10 +192,11 @@ func keyupHandler(layout *Layout, e *Event, w *Window) {
 	if layout == nil {
 		return
 	}
-	keyupHandlerDepth(layout, e, w, 0)
+	var served uint8
+	keyupHandlerDepth(layout, e, w, 0, &served)
 }
 
-func keyupHandlerDepth(layout *Layout, e *Event, w *Window, depth int) {
+func keyupHandlerDepth(layout *Layout, e *Event, w *Window, depth int, served *uint8) {
 	if overMaxDepth(depth) {
 		return
 	}
@@ -196,7 +205,7 @@ func keyupHandlerDepth(layout *Layout, e *Event, w *Window, depth int) {
 		if !isChildEnabled(&layout.Children[i]) {
 			continue
 		}
-		keyupHandlerDepth(&layout.Children[i], e, w, depth+1)
+		keyupHandlerDepth(&layout.Children[i], e, w, depth+1, served)
 		if e.IsHandled {
 			return
 		}
@@ -209,16 +218,16 @@ func keyupHandlerDepth(layout *Layout, e *Event, w *Window, depth int) {
 		onKeyUp = layout.Shape.events.OnKeyUp
 	}
 	// OnKeyUp, like OnKeyDown, is never pre-marked.
-	executeFocusCallback(layout, e, w, onKeyUp, evNotify)
+	executeFocusCallback(layout, e, w, onKeyUp, evNotify, served)
 }
 
-// keyDownScrollHandler handles keyboard-based scrolling.
+// keydownScrollHandler handles keyboard-based scrolling.
 // Supports arrow keys, page up/down, and home/end.
 const (
 	scrollDeltaHome = 10_000_000
 )
 
-func keyDownScrollHandler(layout *Layout, e *Event, w *Window) {
+func keydownScrollHandler(layout *Layout, e *Event, w *Window) {
 	// Post-generation read: name the window rather than the installed
 	// frame cache, which belongs to whichever window generated last.
 	th := w.themeRef()
@@ -271,8 +280,8 @@ func mouseDownHandlerDepth(
 	}
 	// Check mouse lock (only at top level).
 	if !inHandler {
-		if w.viewState.mouseLock.mouseDown != nil {
-			w.viewState.mouseLock.mouseDown(EventCtx{layout, e, w})
+		if locked := w.viewState.mouseLock.lockedMouseDown(); locked != nil {
+			locked(EventCtx{layout, e, w})
 			return
 		}
 	}
@@ -320,9 +329,15 @@ func mouseDownHandlerDepth(
 }
 
 // mouseMoveHandler handles mouse movement events.
-// Traverses reverse (topmost first).
+// Traverses reverse (topmost first). The mouse lock is checked
+// once here, not at every depth: the top call intercepts before
+// any recursion starts.
 func mouseMoveHandler(layout *Layout, e *Event, w *Window) {
 	if layout == nil {
+		return
+	}
+	if w.viewState.mouseLock.MouseMove != nil {
+		w.viewState.mouseLock.MouseMove(EventCtx{layout, e, w})
 		return
 	}
 	mouseMoveHandlerDepth(layout, e, w, 0)
@@ -330,10 +345,6 @@ func mouseMoveHandler(layout *Layout, e *Event, w *Window) {
 
 func mouseMoveHandlerDepth(layout *Layout, e *Event, w *Window, depth int) {
 	if overMaxDepth(depth) {
-		return
-	}
-	if w.viewState.mouseLock.MouseMove != nil {
-		w.viewState.mouseLock.MouseMove(EventCtx{layout, e, w})
 		return
 	}
 	if !w.pointerOverApp(e) {
@@ -364,9 +375,15 @@ func mouseMoveHandlerDepth(layout *Layout, e *Event, w *Window, depth int) {
 }
 
 // mouseUpHandler handles mouse button release events.
-// Traverses reverse (topmost first).
+// Traverses reverse (topmost first). The mouse lock is checked
+// once here, not at every depth: the top call intercepts before
+// any recursion starts.
 func mouseUpHandler(layout *Layout, e *Event, w *Window) {
 	if layout == nil {
+		return
+	}
+	if w.viewState.mouseLock.MouseUp != nil {
+		w.viewState.mouseLock.MouseUp(EventCtx{layout, e, w})
 		return
 	}
 	mouseUpHandlerDepth(layout, e, w, 0)
@@ -374,10 +391,6 @@ func mouseUpHandler(layout *Layout, e *Event, w *Window) {
 
 func mouseUpHandlerDepth(layout *Layout, e *Event, w *Window, depth int) {
 	if overMaxDepth(depth) {
-		return
-	}
-	if w.viewState.mouseLock.MouseUp != nil {
-		w.viewState.mouseLock.MouseUp(EventCtx{layout, e, w})
 		return
 	}
 	ox, oy := rotateMouseInverse(layout.Shape, e)
@@ -428,6 +441,7 @@ func mouseScrollHandler(layout *Layout, e *Event, w *Window) {
 	if layout == nil {
 		return
 	}
+	var skip *Layout
 	if ly := focusedScrollTarget(layout, w); ly != nil {
 		// Cascade-on-unhandled is the designed contract, so there
 		// is no pre-mark here: an unhandled scroll falls through to
@@ -435,15 +449,23 @@ func mouseScrollHandler(layout *Layout, e *Event, w *Window) {
 		if callRelative(ly, e, w, ly.Shape.events.OnMouseScroll, evNotify) {
 			return
 		}
+		// The focused target already ran once above. The
+		// fallback below hit-tests under the cursor, so it
+		// would run the same callback a second time when
+		// the focused shape sits under the cursor. Skip
+		// that one node by pointer, not by ID: duplicate
+		// IDs are reported elsewhere, and must not widen
+		// the skip to an unrelated shape.
+		skip = ly
 	}
-	mouseScrollFallbackHandler(layout, e, w)
+	mouseScrollFallbackHandlerDepth(layout, e, w, 0, skip)
 }
 
 func mouseScrollFallbackHandler(layout *Layout, e *Event, w *Window) {
-	mouseScrollFallbackHandlerDepth(layout, e, w, 0)
+	mouseScrollFallbackHandlerDepth(layout, e, w, 0, nil)
 }
 
-func mouseScrollFallbackHandlerDepth(layout *Layout, e *Event, w *Window, depth int) {
+func mouseScrollFallbackHandlerDepth(layout *Layout, e *Event, w *Window, depth int, skip *Layout) {
 	if overMaxDepth(depth) {
 		return
 	}
@@ -452,7 +474,7 @@ func mouseScrollFallbackHandlerDepth(layout *Layout, e *Event, w *Window, depth 
 		if !isChildEnabled(&layout.Children[i]) {
 			continue
 		}
-		mouseScrollFallbackHandlerDepth(&layout.Children[i], e, w, depth+1)
+		mouseScrollFallbackHandlerDepth(&layout.Children[i], e, w, depth+1, skip)
 		if e.IsHandled {
 			e.MouseX, e.MouseY = ox, oy
 			return
@@ -474,7 +496,7 @@ func mouseScrollFallbackHandlerDepth(layout *Layout, e *Event, w *Window, depth 
 	//
 	// Still no pre-mark: an unhandled scroll falls through to the scroll
 	// container below.
-	if layout.Shape.hasEvents() {
+	if layout.Shape.hasEvents() && layout != skip {
 		if executeMouseCallback(layout, e, w,
 			layout.Shape.events.OnMouseScroll, evNotify) {
 			return
