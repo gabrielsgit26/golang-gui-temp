@@ -43,9 +43,35 @@ and this project adheres to
   because the field that carries it was unexported. An `AccessValue` with `Min`
   equal to `Max`, including the zero value, reports no value. The
   `custom_sliders` example now sets it.
+- **`InteractionState.FocusWithin` (#664)** — a `gui.Interactive` look can now
+  see that a widget inside it has keyboard focus. It is true when the widget or
+  one of its ID-bearing descendants is focused, the same rule `Hovered` and
+  `Pressed` use. `Focused` is unchanged and still means the widget itself. A
+  wrapper around an `Input` no longer builds the Input's effective ID by hand to
+  draw its focus look; the `custom_textinputs` example now reads `FocusWithin`.
+- **`SliderCfg.Look` (#664)** — a slider can now be drawn from parts the app
+  builds. `Look` gets the hover, press and focus state and the value as a
+  fraction, and returns `SliderParts{Track, Fill, Handle}`. The track stays in
+  the layout; the slider moves the handle to the value and sets the fill's
+  length after layout, so a slider with `Fill` sizing works. Drag, keys, wheel,
+  rounding, vertical mode and the screen reader value stay the stock slider's,
+  so a custom look no longer writes them again. The `custom_sliders` example now
+  uses it, and gains the mouse wheel. See `docs/specs/slider-look-hook.md`.
+- **`ScrollbarCfg.Thumb` and `ScrollbarCfg.Track` (#664)** — a scrollbar's thumb
+  and gutter can now be drawn by views the app builds. Each hook gets
+  `ScrollbarState` with the hover and press state and the size of its part. The
+  scrollbar still sizes and moves the thumb, runs the drag, jumps on a gutter
+  press and hides the thumb when nothing overflows. Before, only colors and
+  radii could change, so a raised or gripped thumb could not be built. The new
+  `custom_scrollbars` example shows three looks. See
+  `docs/specs/scrollbar-look-hook.md`.
 
 ### Changed
 
+- **`Window.TestRender` runs a second layout pass when the first asks for one
+  (#664)** — as `FrameFn` does on screen. A test or a `soft.RenderToPNG` capture
+  now sees the settled frame, for example a look that reads hover state, without
+  calling `TestRender` twice.
 - **Space clicks on release, and a held Space shows as pressed (#658)** — a
   focused widget with `ClickOnSpace` (`Button`, `Toggle`, `Switch`, `Radio`,
   `ExpandPanel`, `ColorSwatch`, and custom containers) used to fire `OnClick`

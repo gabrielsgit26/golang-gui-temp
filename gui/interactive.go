@@ -30,6 +30,12 @@ type InteractionState struct {
 	// focused descendant does not count. See [Window.IsFocus].
 	// exportaudit:keep — one member of the state set; the set ships whole
 	Focused bool
+	// FocusWithin is true when the widget or one of its ID-bearing
+	// descendants has keyboard focus. A wrapper around an Input reads it
+	// to draw a focus look while the user types in the field. It uses
+	// the same descendant test as Hovered and Pressed (#664).
+	// exportaudit:keep — one member of the state set; the set ships whole
+	FocusWithin bool
 }
 
 // Interactive builds a view whose look depends on its interaction state.
@@ -74,18 +80,7 @@ func (v interactiveView) GenerateLayout(w *Window) Layout {
 	if v.build == nil {
 		return Layout{}
 	}
-	eid := w.EffID(v.id)
-	hovered := w.IsHovered(eid)
-	pointerPressed := targetWithin(w.viewState.pressTargetID, eid)
-	keyPressed := w.isKeyPressed(eid)
-	child := v.build(InteractionState{
-		Hovered: hovered,
-		Pressed: pointerPressed || keyPressed,
-		// A held Space has no pointer to drag off the widget, so it is
-		// armed without hover.
-		Armed:   keyPressed || (pointerPressed && hovered),
-		Focused: w.IsFocus(eid),
-	})
+	child := v.build(w.interactionState(w.EffID(v.id)))
 	if child == nil {
 		return Layout{}
 	}
@@ -106,6 +101,23 @@ func (v interactiveView) GenerateLayout(w *Window) Layout {
 			v.id, missing)
 	}
 	return layout
+}
+
+// interactionState reads the state of the widget with this effective ID
+// from the last arranged frame. Interactive and a slider Look share it.
+func (w *Window) interactionState(eid string) InteractionState {
+	hovered := w.IsHovered(eid)
+	pointerPressed := targetWithin(w.viewState.pressTargetID, eid)
+	keyPressed := w.isKeyPressed(eid)
+	return InteractionState{
+		Hovered: hovered,
+		Pressed: pointerPressed || keyPressed,
+		// A held Space has no pointer to drag off the widget, so it is
+		// armed without hover.
+		Armed:       keyPressed || (pointerPressed && hovered),
+		Focused:     w.IsFocus(eid),
+		FocusWithin: targetWithin(w.FocusID(), eid),
+	}
 }
 
 // interactiveKeyboardGaps names the fields a clickable root lacks for
