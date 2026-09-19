@@ -116,6 +116,11 @@ and this project adheres to
 
 ### Changed
 
+- **Pointer hit testing skips subtrees outside the pointer (#704)** —
+  mouse-move, mouse-down, mouse-up and scroll-fallback dispatch no longer walk
+  descendants whose inherited clip cannot contain the pointer. Non-clipping
+  quarter-turn containers keep their wider child hit region, and mouse locks
+  still receive pointer events outside the locked shape.
 - **Custom control examples merged into `examples/custom_controls`** — the
   `custom_buttons`, `custom_checkboxes`, `custom_radios`, `custom_toggles`,
   `custom_sliders`, `custom_textinputs` and `custom_scrollbars` examples are now

@@ -131,3 +131,61 @@ func BenchmarkExecuteMouseCallback(b *testing.B) {
 		executeMouseCallback(layout, e, w, cb, evNotify)
 	}
 }
+
+func BenchmarkEventFnMouseMoveDisjointPanels(b *testing.B) {
+	const (
+		panelCols   = 4
+		panelRows   = 3
+		panelWidth  = float32(200)
+		panelHeight = float32(200)
+		controlCols = 8
+		controlRows = 4
+		controlW    = panelWidth / controlCols
+		controlH    = panelHeight / controlRows
+	)
+
+	w := newEventTestWindow()
+	w.layout = Layout{
+		Shape: &Shape{shapeClip: drawClip{
+			Width: float32(w.windowWidth), Height: float32(w.windowHeight),
+		}},
+	}
+	w.layout.Children = make([]Layout, 0, panelCols*panelRows)
+	onMouseMove := func(EventCtx) {}
+	for panelY := range panelRows {
+		for panelX := range panelCols {
+			x := float32(panelX) * panelWidth
+			y := float32(panelY) * panelHeight
+			panel := Layout{
+				Shape: &Shape{
+					shapeClip: drawClip{
+						X: x, Y: y, Width: panelWidth, Height: panelHeight,
+					},
+				},
+				Children: make([]Layout, 0, controlCols*controlRows),
+			}
+			for controlY := range controlRows {
+				for controlX := range controlCols {
+					panel.Children = append(panel.Children, Layout{Shape: &Shape{
+						shapeClip: drawClip{
+							X:      x + float32(controlX)*controlW,
+							Y:      y + float32(controlY)*controlH,
+							Width:  controlW,
+							Height: controlH,
+						},
+						events: &eventHandlers{OnMouseMove: onMouseMove},
+					}})
+				}
+			}
+			w.layout.Children = append(w.layout.Children, panel)
+		}
+	}
+
+	e := &Event{Type: EventMouseMove, MouseX: 12.5, MouseY: 25}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		e.IsHandled = false
+		w.EventFn(e)
+	}
+}
