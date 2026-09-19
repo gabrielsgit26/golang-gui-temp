@@ -178,6 +178,12 @@ and this project adheres to
 
 ### Fixed
 
+- **Root view panic leaked `genDepth` (#689)** — `updateLocked` incremented
+  `viewState.genDepth` around the root view function without `defer`, so a panic
+  skipped the decrement. The leaked depth stuck across later good frames
+  (`idScope` stopped resetting; after 256 panicked frames the tree became
+  placeholders). The root bracket now defers its decrement, matching
+  `generateViewLayout`.
 - **Spellcheck hardening** — from a review of the `spellcheck*` code:
   - All Hunspell handle use on Linux is now serialized by a mutex. Before,
     concurrent `Check`/`Suggest`/`Learn` calls raced inside libhunspell, which
