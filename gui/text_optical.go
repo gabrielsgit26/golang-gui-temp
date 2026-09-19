@@ -132,14 +132,32 @@ const (
 // asked for it — the two forms can name the same run ("0" as a digit
 // probe and as a badge's whole label) while falling back differently, so
 // the flag is what keeps them out of each other's entry.
+//
+// The key holds every field the backend's ink measurement reads
+// (glyphconv passes Features, EmojiBoxWidth and CellHeight through to
+// InkBounds). Features count by content, as a hash: a small-caps or
+// oldstyle-figures feature swaps the glyphs and so changes the ink
+// height, while the pointer itself differs per call. LetterSpacing and
+// the paint-only fields change advances or pixels, not the ink Y and
+// height the offset is solved from, so they are left out on purpose.
 type opticalKey struct {
 	family      string
 	probe       string
+	features    uint64
 	typeface    glyph.Typeface
 	size        float32
 	spacing     float32
+	emojiBox    float32
+	cellHeight  float32
 	contentFree bool
 }
+
+// capOptical bounds the optical-offset memo. The measured form keys on
+// the run, so one entry per distinct label: a first-in-first-out map at
+// capMany missed on every lookup once a frame held more than 100
+// corrected labels, and paid a shaping pass and an outline read for
+// each of them every frame. An entry is a small key and a float.
+const capOptical = 1024
 
 // opticalCapOffset returns the downward shift, in logical pixels, that
 // puts the cap band of style's face on the centre of the line box a text
@@ -192,15 +210,21 @@ func (w *Window) opticalTextOffset(style TextStyle, text string) float32 {
 func (w *Window) opticalOffset(
 	style TextStyle, probe string, contentFree bool, ratio float32,
 ) float32 {
-	if w == nil || style.Size <= 0 {
+	// A non-finite size must not reach the memo: NaN never equals
+	// itself, so it would miss every lookup and pay a shaping pass
+	// per frame, while +Inf would cache an infinite offset.
+	if w == nil || style.Size <= 0 || !f32IsFinite(style.Size) {
 		return 0
 	}
 	key := opticalKey{
 		family:      style.Family,
 		probe:       probe,
+		features:    fnvFontFeatures(Fnv64Offset, style.Features),
 		typeface:    style.Typeface,
 		size:        style.Size,
 		spacing:     style.LineSpacing,
+		emojiBox:    style.EmojiBoxWidth,
+		cellHeight:  style.CellHeight,
 		contentFree: contentFree,
 	}
 	// Memoized per window, not per package: the measurement comes from
@@ -208,7 +232,7 @@ func (w *Window) opticalOffset(
 	// costs a shaping pass and a glyph-outline read, while the pass that
 	// consumes it is allocation-free and runs every frame — so it must
 	// happen once per face, size and run.
-	cache := StateMap[opticalKey, float32](w, nsOpticalOffset, capMany)
+	cache := StateMap[opticalKey, float32](w, nsOpticalOffset, capOptical)
 	if off, ok := cache.Get(key); ok {
 		return off
 	}
@@ -221,7 +245,13 @@ func (w *Window) opticalOffset(
 		// textInkBounds reports Y relative to the advance box top, and
 		// the box is what fontHeight returns, so the two share the
 		// baseline-at-ascent convention render_text.go draws with.
-		off = fontHeight(style, w)/2 - (ink.Y + ink.Height/2)
+		// A non-finite result — a NaN FontHeight from a corrupt face —
+		// would be cached and would move the text to NaN, which the
+		// off == 0 skip below does not catch. Keep the fallback.
+		measured := fontHeight(style, w)/2 - (ink.Y + ink.Height/2)
+		if f32IsFinite(measured) {
+			off = measured
+		}
 	}
 	// A run whose ink already sits centred or low needs no correction;
 	// a negative shift would move it further from centre, not closer.

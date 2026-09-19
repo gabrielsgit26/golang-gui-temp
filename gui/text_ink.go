@@ -41,7 +41,14 @@ func (w *Window) textInkBounds(text string, style TextStyle) (
 	if !ok {
 		return InkBounds{}, false
 	}
-	return tm.TextInkBounds(text, style)
+	ink, ok := tm.TextInkBounds(text, style)
+	// A non-finite box from the backend moves whatever is placed on it
+	// to NaN, and a shape at NaN never paints again. Report it as
+	// unmeasurable, which every caller already handles.
+	if !ok || !f32AllFinite4(ink.X, ink.Y, ink.Width, ink.Height) {
+		return InkBounds{}, false
+	}
+	return ink, true
 }
 
 // centerGlyphOnInk returns an AmendLayout hook that re-centres a
@@ -61,6 +68,13 @@ func (w *Window) textInkBounds(text string, style TextStyle) (
 // leaf, so moving it moves nothing else. Without a measurer (tests) or
 // without the ink capability the glyph stays where advance-box centring
 // put it.
+//
+// The returned closure captures its text and style: one small
+// allocation per widget per generation, the same shape every
+// AmendLayout builder in the toolkit takes. The capture stays, since
+// the text and style live at the call site — reading them back off
+// the arranged shape would centre a typewriter reveal on its prefix
+// rather than on the run the caller named.
 func centerGlyphOnInk(txt string, style TextStyle) func(EventCtx) {
 	return func(ctx EventCtx) {
 		if ctx.Layout == nil || ctx.Window == nil {
