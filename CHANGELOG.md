@@ -10,6 +10,14 @@ and this project adheres to
 
 ### Added
 
+- **`gui.WithExt` and `gui.Ext` (#733)** — a sibling widget package can now
+  store its own style value in the `Theme`, keyed by the exact value type.
+  `WithExt` returns a new theme with a fresh id, so the install fast path and
+  `Themed` scoping cover the value. `Ext` reports a missing value as the zero
+  value and false. Stored values must be immutable: theme copies share the
+  backing map. Every rebuild path (`WithColors`, `WithPadding`, `WithBorders`,
+  `AdjustFontSize`) carries the values, so a sibling derives once at build time
+  instead of syncing a parallel struct by hand.
 - **`gui.ThemeRegister` and `gui.ThemeRegisteredNames` (#713)** — an app that
   builds a custom theme with `ThemeMaker` can now register it, so `ThemePicker`
   lists it, and can enumerate registered names to build its own picker. Empty
@@ -120,6 +128,60 @@ and this project adheres to
   Theme face grids; block and table geometry stays structural and unexported.
 
 ### Changed
+
+- **Accent and danger ramps derive in OKLCH instead of HSL (#732)** — hover and
+  pressed states move `±0.10` on the OKLCH lightness axis, keeping chroma and
+  hue, instead of `±0.12` on the HSL axis. HSL lightness is not perceptual, so
+  the old step read large on a blue accent and small on a yellow or green one;
+  one OKLCH step reads the same on every hue. The step is calibrated so the
+  default accents keep their magnitude (`#89A7DE`/`#3163CE` dark,
+  `#7394CC`/`#0D4FBE` light), and a shifted color that leaves the sRGB gamut
+  sheds chroma until it fits rather than clipping its hue. No migration: no
+  field or function changes, only derived values. `ColorAccentSubtle`
+  (alpha-only) and the `textOnAccent` threshold are untouched.
+
+- **BREAKING: numbered text rungs are semantic roles (#734)** — the closed 6x6
+  grid (`Theme.N1`–`N6`, `B1`–`B6`, `I1`–`I6`, `BI1`–`BI6`, `M1`–`M6`,
+  `Icon1`–`Icon6`) is removed. A number said how big the text was, never what it
+  was for, so two callers with the same purpose picked different rungs and
+  drifted apart. Each purpose is now one role, derived from the same size
+  ladder, so every migrated call site renders pixel-identically (the golden
+  tests pass unchanged). Migration:
+
+  | Before                        | After                                                                                                                        |
+  | ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+  | `theme.B1`                    | `theme.TextStyleDisplay`                                                                                                     |
+  | `theme.B2`                    | `theme.TextStyleTitle`                                                                                                       |
+  | `theme.B3`                    | `theme.TextStyleTitleSmall`                                                                                                  |
+  | `theme.N2`                    | `theme.TextStyleBodyLarge`                                                                                                   |
+  | `theme.N3`                    | `theme.TextStyleBody`                                                                                                        |
+  | `theme.N4`                    | `theme.TextStyleBodySmall`                                                                                                   |
+  | `theme.N5`                    | `theme.TextStyleCaption`                                                                                                     |
+  | `theme.N6`                    | `theme.TextStyleCaptionSmall`                                                                                                |
+  | `theme.M3`                    | `theme.TextStyleCode`                                                                                                        |
+  | `theme.M5`                    | `theme.TextStyleCodeSmall`                                                                                                   |
+  | `theme.M6`                    | `theme.TextStyleCodeTiny`                                                                                                    |
+  | `theme.Icon1`–`Icon6`         | `theme.TextStyleIconXLarge` … `theme.TextStyleIconTiny`                                                                      |
+  | `theme.N1`                    | `theme.TextStyleDisplay.Roman()`                                                                                             |
+  | `theme.B4`                    | `theme.TextStyleBodySmall.Bold()`                                                                                            |
+  | `theme.B5`                    | `theme.TextStyleCaption.Bold()`                                                                                              |
+  | `theme.B6`                    | `theme.TextStyleCaptionSmall.Bold()`                                                                                         |
+  | `theme.I3`                    | `theme.TextStyleBody.Italic()`                                                                                               |
+  | `theme.I4`                    | `theme.TextStyleBodySmall.Italic()`                                                                                          |
+  | `theme.BI3`                   | `theme.TextStyleBody.Italic().Bold()`                                                                                        |
+  | `theme.BI4`                   | `theme.TextStyleBodySmall.Italic().Bold()`                                                                                   |
+  | `theme.I1`/`I2`/`I5`/`I6`     | `theme.TextStyleDisplay`/`Title`/`Caption`/`CaptionSmall` + `.Italic()`                                                      |
+  | `theme.BI1`/`BI2`/`BI5`/`BI6` | as `I1`/`I2`/`I5`/`I6`, + `.Bold()` (order-independent)                                                                      |
+  | `theme.M1`/`M2`/`M4`          | `theme.Mono(theme.TextStyleDisplay.Roman())`, `theme.Mono(theme.TextStyleBodyLarge)`, `theme.Mono(theme.TextStyleBodySmall)` |
+
+  `Bold`, `Italic` and `Roman` are methods on `TextStyle`: pure face maps,
+  order-independent and idempotent, leaving size and color alone. `Mono` is a
+  method on `Theme` (only the theme knows `ThemeCfg.MonoFontFamily`) and applies
+  the mono +1 optical compensation; overriding the size afterwards discards it.
+  Decomposing a role (`role.Color`, `role.Size`) works exactly as decomposing a
+  rung did. The sibling migration (go-edit and go-term read `M5`/`M6`, go-charts
+  reads `N`/`B` rungs) rides the breaking-branch sync-siblings pass before this
+  ships.
 
 - **BREAKING: per-widget `Theme` styles are private, customize through
   `ThemeCfg` (#735)** — `Theme.ButtonStyle` (with `ButtonStylePrimary`,
